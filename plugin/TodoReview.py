@@ -227,10 +227,28 @@ class TodoReviewCommand(sublime_plugin.TextCommand):
         thread.start()
 
     def render(self, results: List[RESULT], time: int, count: int) -> None:
-        self.view.run_command(
+        view = self.get_or_create_view()
+        view.run_command(
             "todo_review_render",
             {"results": results, "time": time, "count": count, "args": self.args},
         )
+
+    def get_or_create_view(self) -> sublime.View:
+        self.window = sublime.active_window()
+        for view in self.window.views():
+            if view.settings().get("todo_results", False):
+                return view
+        view = self.window.new_file()
+        view.set_name("TodoReview")
+        view.assign_syntax(TODO_SYNTAX_FILE)
+        view.set_scratch(True)
+        view.settings().set("todo_results", True)
+        view.settings().set("line_padding_bottom", 2)
+        view.settings().set("line_padding_top", 2)
+        view.settings().set("word_wrap", False)
+        view.settings().set("command_mode", True)
+        view.settings().set("is_widget", True)
+        return view
 
 
 class TodoReviewRenderCommand(sublime_plugin.TextCommand):
@@ -250,12 +268,13 @@ class TodoReviewRenderCommand(sublime_plugin.TextCommand):
         self.count = count
         self.results = results
         self.sorted = self.sort()
-        self.rview = self.get_view()
+        self.view.erase(edit, sublime.Region(0, len(self.view)))
         self.draw_header()
         self.draw_results()
-        self.window.focus_view(self.rview)
+        if window := self.view.window():
+            window.focus_view(self.view)
         self.args["settings"] = settings.proj
-        self.rview.settings().set("review_args", self.args)
+        self.view.settings().set("review_args", self.args)
 
     def sort(self) -> Iterator[Tuple[str, Iterator[RESULT]]]:
         assert settings
@@ -270,24 +289,6 @@ class TodoReviewRenderCommand(sublime_plugin.TextCommand):
         results = sorted(self.results, key=lambda m: (str(w.get(m["patt"].upper(), "No title")), m["priority"]))
 
         return itertools.groupby(results, key=lambda m: m["patt"])
-
-    def get_view(self) -> sublime.View:
-        self.window = sublime.active_window()
-        for view in self.window.views():
-            if view.settings().get("todo_results", False):
-                view.erase(self.edit, sublime.Region(0, len(view)))
-                return view
-        view = self.window.new_file()
-        view.set_name("TodoReview")
-        view.assign_syntax(TODO_SYNTAX_FILE)
-        view.set_scratch(True)
-        view.settings().set("todo_results", True)
-        view.settings().set("line_padding_bottom", 2)
-        view.settings().set("line_padding_top", 2)
-        view.settings().set("word_wrap", False)
-        view.settings().set("command_mode", True)
-        view.settings().set("is_widget", True)
-        return view
 
     def draw_header(self) -> None:
         assert settings
@@ -304,14 +305,14 @@ class TodoReviewRenderCommand(sublime_plugin.TextCommand):
         res = "// "
         res += forms.replace("%d", date).replace("%t", str(self.time)).replace("%c", str(self.count))
         res += "\n"
-        self.rview.insert(self.edit, len(self.rview), res)
+        self.view.insert(self.edit, len(self.view), res)
 
     def draw_results(self) -> None:
         data: Tuple[List[sublime.Region], List[RESULT]] = ([], [])
         for patt, _items in self.sorted:
             items = list(_items)
             res = "\n## %t (%n)\n".replace("%t", patt.upper()).replace("%n", str(len(items)))
-            self.rview.insert(self.edit, len(self.rview), res)
+            self.view.insert(self.edit, len(self.view), res)
             for idx, item in enumerate(items, 1):
                 line = "{}. {}".format(idx, self.draw_file(item))
                 res = "{}{}{}\n".format(
@@ -319,14 +320,14 @@ class TodoReviewRenderCommand(sublime_plugin.TextCommand):
                     " " * max((self.largest - len(line)), 1),
                     item["note"],
                 )
-                start = len(self.rview)
-                self.rview.insert(self.edit, start, res)
-                region = sublime.Region(start, len(self.rview))
+                start = len(self.view)
+                self.view.insert(self.edit, start, res)
+                region = sublime.Region(start, len(self.view))
                 data[0].append(region)
                 data[1].append(item)
-        self.rview.add_regions("results", data[0], "")
+        self.view.add_regions("results", data[0], "")
         d = dict(("{0},{1}".format(k.a, k.b), v) for k, v in zip(data[0], data[1]))
-        self.rview.settings().set("review_results", d)
+        self.view.settings().set("review_results", d)
 
     def draw_file(self, item: RESULT) -> str:
         assert settings
