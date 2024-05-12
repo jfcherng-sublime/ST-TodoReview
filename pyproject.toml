@@ -6,7 +6,7 @@ mypy_path = 'typings:stubs'
 python_version = '3.8'
 
 [[tool.mypy.overrides]]
-module = ["plugin.libs.*"]
+module = ["plugin.libs.*", "wcmatch.*"]
 ignore_errors = true
 ignore_missing_imports = true
 

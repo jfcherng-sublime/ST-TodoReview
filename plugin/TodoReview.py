@@ -12,11 +12,11 @@ from typing import Any, Callable, Dict, Generator, Iterable, Iterator, TypeVar
 
 import sublime
 import sublime_plugin
+from wcmatch import wcmatch
 
 assert __package__
 
 _T = TypeVar("_T", bound=Callable[..., Any])
-
 RESULT = Dict[str, Any]
 
 PACKAGE_NAME = __package__.partition(".")[0]

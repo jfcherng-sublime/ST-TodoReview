@@ -1,2 +1,1 @@
-mypy
-ruff>=0.4
+wcmatch>=8,<9
