@@ -8,7 +8,8 @@ import os
 import re
 import threading
 import timeit
-from typing import Any, Callable, Dict, Generator, Iterable, Iterator, TypeVar
+from functools import partial
+from typing import Any, Callable, Dict, Generator, Iterable, Iterator, Sequence, TypeVar
 
 import sublime
 import sublime_plugin
@@ -24,6 +25,27 @@ TODO_SYNTAX_FILE = f"Packages/{PACKAGE_NAME}/TodoReview.sublime-syntax"
 
 settings: Settings | None = None
 thread: Thread | None = None
+
+
+def wcmatcher_creator(
+    file_patterns: Sequence[str] | None = None,
+    exclude_patterns: Sequence[str] | None = None,
+    *,
+    ignorecase: bool = False,
+    synlink: bool = False,
+) -> partial[wcmatch.WcMatch]:
+    flags = wcmatch.HIDDEN | wcmatch.PATHNAME | wcmatch.GLOBSTAR | wcmatch.RECURSIVE | wcmatch.SYMLINKS
+    if ignorecase:
+        flags |= wcmatch.IGNORECASE
+    if synlink:
+        flags |= wcmatch.SYMLINKS
+
+    return partial(
+        wcmatch.WcMatch,
+        file_patterns="|".join(file_patterns) if file_patterns else None,
+        exclude_patterns="|".join(exclude_patterns) if exclude_patterns else None,
+        flags=flags,
+    )
 
 
 def fn_to_regex(fn: str) -> str:
@@ -96,35 +118,25 @@ class Engine:
         patt_folders = settings.get("exclude_folders", [])
 
         match_patterns = merge_regexes(patt_patterns.values())
-        match_files = merge_regexes(map(fn_to_regex, patt_files))
-        match_folders = merge_regexes(map(fn_to_regex, patt_folders))
+        # @todo hahah
 
+        self.wcmatcher_creator = wcmatcher_creator(
+            None,
+            patt_files + patt_folders,
+            ignorecase=bool(re_case),
+            synlink=True,
+        )
         self.patterns = re.compile(match_patterns, re_case)
         self.priority = re.compile(r"\(([0-9]{1,2})\)")
-        self.exclude_files = re.compile(match_files, re_case)
-        self.exclude_folders = re.compile(match_folders, re_case)
         self.open = w.views() if (w := self.view.window()) else []
         self.open_files = [v.file_name() for v in self.open if v.file_name()]
 
     def files(self) -> Generator[str, None, None]:
-        seen_paths = set()
-        for dirpath in self.dirpaths:
-            dirpath = self.resolve(dirpath)
-            for dirp, _, filepaths in os.walk(dirpath, followlinks=True):
-                if self.exclude_folders.search(dirp + os.sep):
-                    continue
-                for filepath in filepaths:
-                    self.filepaths.add(os.path.join(dirp, filepath))
-        for filepath in self.filepaths:
-            filepath = self.resolve(filepath)
-            if filepath in seen_paths:
-                continue
-            if self.exclude_folders.search(filepath):
-                continue
-            if self.exclude_files.search(filepath):
-                continue
-            seen_paths.add(filepath)
-            yield filepath
+        found_files = set()
+        for path in itertools.chain(self.dirpaths, self.filepaths):
+            found_files |= set(self.wcmatcher_creator(root_dir=self.resolve(path)).match())
+        print(f"{found_files = }")
+        yield from found_files
 
     def extract(self, files: Iterable[str]) -> Generator[RESULT, None, None]:
         assert settings and thread
@@ -167,13 +179,13 @@ class Engine:
     def process(self) -> Generator[RESULT, None, None]:
         return self.extract(self.files())
 
-    def resolve(self, directory: str) -> str:
+    def resolve(self, path: str) -> str:
         assert settings
 
         if settings.get("resolve_symlinks", True):
-            return os.path.realpath(os.path.expanduser(os.path.abspath(directory)))
+            return os.path.realpath(os.path.expanduser(os.path.abspath(path)))
         else:
-            return os.path.expanduser(os.path.abspath(directory))
+            return os.path.expanduser(os.path.abspath(path))
 
 
 class Thread(threading.Thread):
